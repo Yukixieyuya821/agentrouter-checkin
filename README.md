@@ -20,7 +20,19 @@
 
 ## 二、配置
 
-建议将密码、SMTP 授权码等敏感内容配置为 GitHub Actions 的 **Secrets**；普通地址或主机名可配置为 **Variables**。脚本本身均通过环境变量读取，本地配置可参考 `.env.example`。
+建议将密码、SMTP 授权码等敏感内容配置为 GitHub Actions 的 **Secrets**；普通地址或主机名可配置为 **Variables**。本地运行时，脚本会自动读取与 `checkin.py` 同目录的 `.env` 文件，已有的系统环境变量优先于 `.env`。
+
+### 本地 `.env` 配置
+
+复制示例文件并填写实际配置：
+
+```powershell
+Copy-Item .env.example .env
+pip install -r requirements.txt
+python checkin.py
+```
+
+脚本使用 `checkin.py` 所在目录定位 `.env`，因此从其他工作目录启动也能正确读取。`.env` 已加入 `.gitignore`，不会被 Git 提交；请勿把真实账号密码或 SMTP 授权码写入 `.env.example`。
 
 ### 账号配置
 

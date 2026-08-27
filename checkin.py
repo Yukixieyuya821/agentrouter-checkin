@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AgentRouter 每日签到脚本（GitHub Actions 专用）
+AgentRouter 每日签到脚本（支持本地运行与 GitHub Actions）
 
 需要的配置（环境变量）：
   AGENTROUTER_USERNAME   登录用户名或邮箱（单用户模式）
@@ -10,7 +10,7 @@ AgentRouter 每日签到脚本（GitHub Actions 专用）
   SOCKS5_PROXY           代理，可多个（换行或逗号分隔），如
                          socks5://user:pass@host:port
 
-邮件通知配置见 README.md；SMTP 服务器、发件人和收件人均由环境变量配置。
+邮件通知配置见 README.md；本地可使用同目录 .env，GitHub Actions 使用环境变量。
 
 模式判定：
   - 单用户：AGENTROUTER_USERNAME 和 AGENTROUTER_PASSWORD 同时存在
@@ -22,8 +22,20 @@ import re
 import sys
 import time
 import logging
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
+
+# 某些精简版 Python 运行时不会自动把脚本目录加入 sys.path。
+# 显式加入后，无论从哪个工作目录启动，都能导入同目录的 notify.py。
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 import requests
+from dotenv import load_dotenv
+
+# 本地运行时自动读取 checkin.py 同目录的 .env；系统/GitHub Actions 环境变量优先。
+load_dotenv(dotenv_path=SCRIPT_DIR / ".env", override=False)
 
 # ---------------------------------------------------------------------------
 # 配置

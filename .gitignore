@@ -1,0 +1,8 @@
+# 本地环境变量与敏感信息
+.env
+.env.*
+!.env.example
+
+# Python 缓存
+__pycache__/
+*.py[cod]
