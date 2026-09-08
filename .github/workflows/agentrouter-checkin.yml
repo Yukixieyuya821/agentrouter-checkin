@@ -55,12 +55,12 @@ jobs:
           SOCKS5_PROXY: ${{ secrets.SOCKS5_PROXY || vars.SOCKS5_PROXY }}
 
           # SMTP 邮件配置
-          SMTP_HOST: ${{ vars.SMTP_HOST }}
-          SMTP_PORT: ${{ vars.SMTP_PORT }}
-          SMTP_SECURITY: ${{ vars.SMTP_SECURITY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST || vars.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || vars.SMTP_PORT }}
+          SMTP_SECURITY: ${{ secrets.SMTP_SECURITY || vars.SMTP_SECURITY }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM }}
-          EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
+          EMAIL_FROM_NAME: ${{ secrets.EMAIL_FROM_NAME || vars.EMAIL_FROM_NAME }}
           EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
         run: python scripts/run_with_mihomo.py

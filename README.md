@@ -81,13 +81,13 @@ env:
   AGENTROUTER_USERNAME: ${{ secrets.AGENTROUTER_USERNAME || vars.AGENTROUTER_USERNAME }}
   AGENTROUTER_PASSWORD: ${{ secrets.AGENTROUTER_PASSWORD || vars.AGENTROUTER_PASSWORD }}
   SOCKS5_PROXY: ${{ secrets.SOCKS5_PROXY || vars.SOCKS5_PROXY }}
-  SMTP_HOST: ${{ vars.SMTP_HOST }}
-  SMTP_PORT: ${{ vars.SMTP_PORT }}
-  SMTP_SECURITY: ${{ vars.SMTP_SECURITY }}
+  SMTP_HOST: ${{ secrets.SMTP_HOST || vars.SMTP_HOST }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT || vars.SMTP_PORT }}
+  SMTP_SECURITY: ${{ secrets.SMTP_SECURITY || vars.SMTP_SECURITY }}
   SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
   SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
   EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM }}
-  EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
+  EMAIL_FROM_NAME: ${{ secrets.EMAIL_FROM_NAME || vars.EMAIL_FROM_NAME }}
   EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
 ```
 
@@ -159,6 +159,6 @@ env:
 | `用户名或密码错误` | 确认已在网站「个人设置」绑定邮箱并设置密码，且用户名/邮箱正确 |
 | `未配置账号信息` | 未设置任何账号变量，请检查 `AGENTROUTER_USERNAME`+`AGENTROUTER_PASSWORD` 或 `AGENTROUTER_ACCOUNTS` |
 | `AGENTROUTER_ACCOUNTS 解析后无有效账号` | `AGENTROUTER_ACCOUNTS` 格式错误，请检查是否遗漏冒号分隔符 |
-| `缺少邮件配置` | 未配置 `SMTP_HOST`、`EMAIL_FROM` 或 `EMAIL_TO`；补齐后即可发送邮件 |
+| `缺少邮件配置` | 当前运行未读到 `SMTP_HOST`、`EMAIL_FROM` 或 `EMAIL_TO`；请在仓库 Actions 的 Secrets 或 Variables 中补齐同名配置（Secrets 优先）。本地 `.env` 不会自动上传到 Actions。更新工作流后请在最新分支上使用 Run workflow 创建新运行 |
 | `SMTP_SECURITY 仅支持 ssl、starttls 或 none` | `SMTP_SECURITY` 配置值错误 |
 | `邮件通知发送失败` | 检查 SMTP 主机、端口、加密方式、账号、授权码及发件人地址是否与服务商要求一致 |
