@@ -201,7 +201,7 @@ def send_combined_email_notification(results: list) -> bool:
     for result in results:
         display = str(result.get("display", ""))
         if result.get("error"):
-            status = f"❌ 登录失败：{result['error']}"
+            status = f"❌ 执行失败：{result['error']}"
         elif result.get("checked_in"):
             status = f"🎉 签到成功，余额 ${result.get('balance_usd', 0.0):,.2f}"
         else:
@@ -234,3 +234,28 @@ def send_combined_email_notification(results: list) -> bool:
     )
     subject = f"AgentRouter 签到汇总 - {date}（{len(results)} 个账号）"
     return _send_email(subject, text_body, html_body)
+
+
+def send_failure_notification(data: dict) -> bool:
+    """发送工作流失败摘要；详细日志通过运行链接查看，不转发原始日志。"""
+    date = _bjt_date_str()
+    fields = [
+        ("日期", date),
+        ("仓库", str(data.get("repository", ""))),
+        ("工作流", str(data.get("workflow", ""))),
+        ("失败步骤", str(data.get("failed_steps", "未知，请查看运行日志"))),
+        ("运行次数", str(data.get("attempt", "1"))),
+        ("运行日志", str(data.get("run_url", ""))),
+    ]
+    text_body = "AgentRouter 工作流执行失败\n\n" + "\n".join(
+        f"{label}：{value}" for label, value in fields
+    )
+    html_fields = []
+    for label, value in fields:
+        rendered = escape(value)
+        if label == "运行日志" and value.startswith(("https://", "http://")):
+            rendered = f'<a href="{escape(value, quote=True)}">查看本次运行日志</a>'
+        html_fields.append(f"<p><strong>{label}</strong>：{rendered}</p>")
+    html_body = ("<html><body><h2>AgentRouter 工作流执行失败</h2>"
+                 + "".join(html_fields) + "</body></html>")
+    return _send_email(f"AgentRouter 执行失败通知 - {date}", text_body, html_body)

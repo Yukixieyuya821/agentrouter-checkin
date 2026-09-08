@@ -197,10 +197,13 @@ def get_quota(session: requests.Session, access_token: str, user_id) -> int:
         headers = {"Authorization": access_token, "New-API-User": str(user_id)}
         data = get_json(session.get(f"{BASE_URL}/api/user/self", headers=headers, timeout=25))
         if data and data.get("success"):
-            return data.get("data", {}).get("quota", 0)
+            quota = data.get("data", {}).get("quota")
+            if isinstance(quota, (int, float)):
+                return quota
     except requests.RequestException as e:
         log.error("查询余额异常: %s", e)
-    return 0
+        raise RuntimeError("查询余额请求失败") from None
+    raise RuntimeError("查询余额失败或响应缺少 quota")
 
 def do_checkin_for_account(session: requests.Session, username: str, password: str) -> dict:
     """单个账号登录（触发签到）+ 查余额，返回结果 dict 供汇总通知使用"""
@@ -212,10 +215,14 @@ def do_checkin_for_account(session: requests.Session, username: str, password: s
         "error": err,
     }
     if not user:
+        result["error"] = err or "登录响应缺少用户信息"
         return result
     result["checked_in"] = bool(user.get("checked_in"))
-    quota = get_quota(session, user.get("access_token", ""), user.get("id", ""))
-    result["balance_usd"] = round(quota_to_usd(quota), 2)
+    try:
+        quota = get_quota(session, user.get("access_token", ""), user.get("id", ""))
+        result["balance_usd"] = round(quota_to_usd(quota), 2)
+    except RuntimeError as error:
+        result["error"] = f"登录已成功，但{error}"
     return result
 
 # ---------------------------------------------------------------------------
@@ -257,13 +264,9 @@ def run_single_mode():
         "checked_in": not new_checkin,  # notify: True=今日已签到, False=新签到
         "balance_usd": balance_usd,
     }
-    try:
-        from notify import send_email_notification  # type: ignore
-        send_email_notification(notify_data)
-    except ImportError as e:
-        log.warning("无法导入 notify 模块: %s", e)
-    except Exception as e:
-        log.error("发送邮件通知异常: %s", e)
+    from notify import send_email_notification
+    if not send_email_notification(notify_data):
+        raise RuntimeError("签到已完成，但结果邮件未能发送")
 
 def run_multi_mode():
     """多用户签到：共享一个可用代理，每账号独立 session，聚合后发一条汇总通知"""
@@ -283,24 +286,31 @@ def run_multi_mode():
     results = []
     for username, password in accounts:
         log.info("签到中: %s", mask(username))
-        session = create_session(proxy_url)  # 独立 session，避免 cookie 串扰
-        result = do_checkin_for_account(session, username, password)
+        try:
+            with create_session(proxy_url) as session:  # 独立 session，避免 cookie 串扰
+                result = do_checkin_for_account(session, username, password)
+        except Exception as error:
+            result = {"display": mask(username), "checked_in": False,
+                      "balance_usd": 0.0, "error": f"账号执行异常（{type(error).__name__}）"}
         results.append(result)
         if result["error"]:
-            log.warning("❌ %s 登录失败: %s", mask(username), result["error"])
+            log.warning("❌ %s 执行失败: %s", mask(username), result["error"])
         elif result["checked_in"]:
             log.info("🎉 %s 签到成功，余额 $%.2f", mask(username), result["balance_usd"])
         else:
             log.info("✅ %s 今日已签到，余额 $%.2f", mask(username), result["balance_usd"])
 
     # 3. 发送汇总邮件通知
-    try:
-        from notify import send_combined_email_notification  # type: ignore
-        send_combined_email_notification(results)
-    except ImportError as e:
-        log.warning("无法导入 notify 模块: %s", e)
-    except Exception as e:
-        log.error("发送邮件通知异常: %s", e)
+    from notify import send_combined_email_notification
+    if not send_combined_email_notification(results):
+        raise RuntimeError("账号执行完毕，但汇总邮件未能发送")
+    if any(result.get("error") for result in results):
+        # Only suppress fallback mail once the failure summary has been delivered.
+        output_path = os.getenv("GITHUB_OUTPUT")
+        if output_path:
+            with open(output_path, "a", encoding="utf-8") as output:
+                output.write("failure_notified=true\n")
+        sys.exit(1)
 
 def main():
     log.info("=" * 48)

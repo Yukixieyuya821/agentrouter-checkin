@@ -14,12 +14,22 @@ jobs:
       MIHOMO_ENABLED: ${{ secrets.MIHOMO_CONFIG_B64 != '' }}
     permissions:
       contents: read
+    outputs:
+      failure_notified: ${{ steps.checkin.outputs.failure_notified }}
+      step_results: >-
+        {"checkout":"${{ steps.checkout.outcome }}",
+         "setup_python":"${{ steps.setup_python.outcome }}",
+         "dependencies":"${{ steps.dependencies.outcome }}",
+         "mihomo":"${{ steps.mihomo.outcome }}",
+         "checkin":"${{ steps.checkin.outcome }}"}
 
     steps:
       - name: 📥 检出代码
+        id: checkout
         uses: actions/checkout@v4
 
       - name: 🐍 设置 Python
+        id: setup_python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -27,9 +37,11 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: 📦 安装依赖
+        id: dependencies
         run: pip install -r requirements.txt
 
       - name: 🌐 安装 Mihomo 代理内核（可选）
+        id: mihomo
         if: env.MIHOMO_ENABLED == 'true'
         shell: bash
         run: |
@@ -43,6 +55,7 @@ jobs:
           chmod 700 "$RUNNER_TEMP/mihomo"
 
       - name: ✅ 执行签到并发送邮件通知
+        id: checkin
         env:
           MIHOMO_CONFIG_B64: ${{ secrets.MIHOMO_CONFIG_B64 }}
           MIHOMO_BINARY: ${{ runner.temp }}/mihomo
@@ -64,3 +77,30 @@ jobs:
           EMAIL_FROM_NAME: ${{ secrets.EMAIL_FROM_NAME || vars.EMAIL_FROM_NAME }}
           EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
         run: python scripts/run_with_mihomo.py
+
+  notify_failure:
+    name: 📧 工作流失败邮件通知
+    needs: checkin
+    if: ${{ failure() && needs.checkin.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 检出通知代码
+        uses: actions/checkout@v4
+
+      # 使用运行器自带的 Python 3 和标准库，不依赖签到作业的 pip 或代理。
+      - name: 📧 发送失败通知（最多尝试三次）
+        env:
+          FAILED_STEP_RESULTS: ${{ needs.checkin.outputs.step_results }}
+          FAILURE_ALREADY_NOTIFIED: ${{ needs.checkin.outputs.failure_notified }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST || vars.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || vars.SMTP_PORT }}
+          SMTP_SECURITY: ${{ secrets.SMTP_SECURITY || vars.SMTP_SECURITY }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM }}
+          EMAIL_FROM_NAME: ${{ secrets.EMAIL_FROM_NAME || vars.EMAIL_FROM_NAME }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
+        run: python3 scripts/notify_failure.py
