@@ -9,6 +9,9 @@ on:
 jobs:
   checkin:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      MIHOMO_ENABLED: ${{ secrets.MIHOMO_CONFIG_B64 != '' }}
     permissions:
       contents: read
 
@@ -26,8 +29,23 @@ jobs:
       - name: 📦 安装依赖
         run: pip install -r requirements.txt
 
+      - name: 🌐 安装 Mihomo 代理内核（可选）
+        if: env.MIHOMO_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install PyYAML==6.0.2
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 180 \
+            https://github.com/MetaCubeX/mihomo/releases/download/v1.19.28/mihomo-linux-amd64-v1-v1.19.28.gz \
+            --output "$RUNNER_TEMP/mihomo.gz"
+          echo "c0c446f0b0e0bceffffa32daad220ffd35915b9f576f35557f49226f09f54a72  $RUNNER_TEMP/mihomo.gz" | sha256sum --check
+          gzip -dc "$RUNNER_TEMP/mihomo.gz" > "$RUNNER_TEMP/mihomo"
+          chmod 700 "$RUNNER_TEMP/mihomo"
+
       - name: ✅ 执行签到并发送邮件通知
         env:
+          MIHOMO_CONFIG_B64: ${{ secrets.MIHOMO_CONFIG_B64 }}
+          MIHOMO_BINARY: ${{ runner.temp }}/mihomo
           # AgentRouter 配置
           AGENTROUTER_BASE_URL: ${{ vars.AGENTROUTER_BASE_URL }}
           AGENTROUTER_USERNAME: ${{ secrets.AGENTROUTER_USERNAME || vars.AGENTROUTER_USERNAME }}
@@ -45,4 +63,4 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM || vars.EMAIL_FROM }}
           EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
           EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
-        run: python checkin.py
+        run: python scripts/run_with_mihomo.py

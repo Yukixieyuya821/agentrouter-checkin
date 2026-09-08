@@ -13,7 +13,7 @@
 1. 用 GitHub 登录 https://agentrouter.org。
 2. **绑定邮箱并设置密码**：进入「个人设置」→ 绑定邮箱并设置登录密码。
    - 登录时选择「邮箱」或「用户名」+ 密码登录；如需修改密码，可使用「忘记密码」。
-3. **准备代理**：一个能访问该站点且未被 WAF 拦截的 SOCKS5 / HTTP 代理（国内 / 香港 / 新加坡 IP）。
+3. **代理（可选）**：直连不可用时，准备 SOCKS5 / HTTP 代理，或含节点的 Clash / Mihomo 配置文件（Actions 可自动启动代理内核，见下文）。
 4. **准备 SMTP 服务**：例如 Gmail、QQ 邮箱、企业邮箱或其他支持 SMTP 的邮箱服务。若服务商要求，请使用 SMTP 授权码而非网页登录密码。
 
 ---
@@ -90,6 +90,27 @@ env:
   EMAIL_FROM_NAME: ${{ vars.EMAIL_FROM_NAME }}
   EMAIL_TO: ${{ secrets.EMAIL_TO || vars.EMAIL_TO }}
 ```
+
+### GitHub Actions 使用 Clash / Mihomo 节点文件
+
+不需要让自己的电脑开机，也不需要在电脑上启动代理软件。工作流会在 GitHub 的 Ubuntu 运行器中下载固定版本的 [Mihomo 内核](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.28)、校验 SHA-256、启动代理，签到结束后关闭内核并删除临时配置。
+
+1. 在项目目录打开 PowerShell，运行以下命令（将路径替换为自己的配置文件）：
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\encode_mihomo.ps1 -ConfigPath 'C:\path\to\your\mihomo-config.yaml'
+   ```
+
+   此命令仅对本次 PowerShell 进程放开脚本执行，不修改系统执行策略。脚本将文件进行 gzip 压缩和 Base64 编码，结果直接复制到剪贴板，不会打印节点密码。压缩用于满足 [GitHub Secret 的 48 KB 限制](https://docs.github.com/en/actions/reference/security/secrets)；编码本身不是加密，请把结果当作密码保管。
+
+2. 在仓库的 **Settings → Secrets and variables → Actions → New repository secret** 中，新建 **`MIHOMO_CONFIG_B64`**，粘贴剪贴板内容并保存。不要把原始文件或编码内容提交到 Git。
+3. 将更新后的代码和工作流推送到 GitHub，在 **Actions → AgentRouter 每日签到 → Run workflow** 手动运行一次。
+
+配置了 `MIHOMO_CONFIG_B64` 后，无需另外填写 `SOCKS5_PROXY`。工作流为每个节点创建一个仅运行器本机可访问的代理端口，签到脚本按文件顺序请求 AgentRouter 的 `/api/status`，选择首个返回成功 JSON 的节点；全部失败后仍按原逻辑尝试直连。节点越靠后，等待可能越久（每次请求超时 25 秒）。已有 `SOCKS5_PROXY` 在该模式下会被节点端口列表覆盖。
+
+支持 YAML 中 `proxies` 下直接列出的节点（包括 Shadowsocks）。只提供订阅 URL / `proxy-providers` 的文件以及依赖 `dialer-proxy` 的链式代理不适用。运行器提取节点和 `hosts`，不沿用桌面端的分流规则、DNS 监听和管理面板；节点协议仍须由该版本 Mihomo 支持。使用 [Mihomo 的 listener `proxy` 字段](https://wiki.metacubex.one/en/config/inbound/listeners/) 将各端口绑定到对应节点。
+
+删除 `MIHOMO_CONFIG_B64` 后，工作流恢复使用原有 `SOCKS5_PROXY` 或直连。节点失效时，重新编码更新后的文件并替换 Secret。
 
 ### 通用变量（两种模式都可使用）
 
