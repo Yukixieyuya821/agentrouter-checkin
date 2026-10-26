@@ -48,6 +48,7 @@ PROXY_ENV = os.getenv("SOCKS5_PROXY") or ""
 
 # New-API 配额 → 美元换算：1 USD = 500000 quota
 QUOTA_PER_UNIT = 500000
+QUOTA_MAX_CONNECTIONS = 5
 BJT = timezone(timedelta(hours=8))
 
 class BJTFormatter(logging.Formatter):
@@ -127,7 +128,7 @@ def get_json(resp: requests.Response):
         return resp.json()
     except ValueError:
         if "aliyun_waf" in resp.text:
-            log.warning("响应被阿里云 WAF 拦截（当前 IP/代理不可用）")
+            log.warning("当前请求被阿里云 WAF 拦截")
         return None
 
 # ---------------------------------------------------------------------------
@@ -137,6 +138,9 @@ def get_json(resp: requests.Response):
 def create_session(proxy_url: str = "") -> requests.Session:
     """创建仿浏览器 Session（可选代理）"""
     s = requests.Session()
+    # Keep the chosen node (including explicit direct access) independent of
+    # HTTP_PROXY / HTTPS_PROXY inherited from the host.
+    s.trust_env = False
     s.headers.update({
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -151,7 +155,7 @@ def create_session(proxy_url: str = "") -> requests.Session:
     return s
 
 def find_working_proxy() -> str:
-    """逐个尝试代理 + 直连，返回第一个能绕过 WAF 的代理 URL；全部失败返回 None"""
+    """返回首个通过状态接口检查的代理 URL；这不保证登录或余额接口可用。"""
     proxies = parse_proxies(PROXY_ENV)
     attempts = [(p, p.split("@")[-1]) for p in proxies] + [("", "直连（无代理）")]
     for proxy_url, label in attempts:
@@ -160,15 +164,17 @@ def find_working_proxy() -> str:
         try:
             data = get_json(s.get(f"{BASE_URL}/api/status", timeout=25))
             if data and data.get("success"):
-                log.info("✅ 连接可用：%s（已绕过 WAF）", label)
+                log.info("✅ 状态接口可用：%s（登录和余额接口仍需验证）", label)
                 return proxy_url
         except Exception as e:
             log.warning("连接 [%s] 异常: %s", label, e)
+        finally:
+            s.close()
         log.warning("❌ 连接 [%s] 不可用，尝试下一个", label)
     return None
 
 def build_working_session():
-    """返回第一个能绕过 WAF 的 session；全部失败返回 None（单用户模式使用）"""
+    """返回首个通过状态接口检查的 session；全部失败返回 None。"""
     proxy_url = find_working_proxy()
     if proxy_url is None:
         return None
@@ -191,19 +197,44 @@ def do_login(session: requests.Session, username: str, password: str) -> tuple:
         log.error("登录请求异常: %s", e)
         return {}, str(e)
 
-def get_quota(session: requests.Session, access_token: str, user_id) -> int:
-    """用登录得到的 access_token 查询最新余额 quota"""
+class RetryableQuotaError(RuntimeError):
+    """余额请求被 WAF 拦截或网络失败，可以换连接重试。"""
+
+
+def _get_quota_once(session: requests.Session, access_token: str, user_id) -> int:
+    """查询一次余额；业务错误及缺少 quota 不触发换节点。"""
     try:
         headers = {"Authorization": access_token, "New-API-User": str(user_id)}
-        data = get_json(session.get(f"{BASE_URL}/api/user/self", headers=headers, timeout=25))
+        response = session.get(f"{BASE_URL}/api/user/self", headers=headers, timeout=25)
+        if "aliyun_waf" in response.text.lower():
+            raise RetryableQuotaError("查询余额被阿里云 WAF 拦截")
+        data = get_json(response)
         if data and data.get("success"):
             quota = data.get("data", {}).get("quota")
             if isinstance(quota, (int, float)):
                 return quota
-    except requests.RequestException as e:
-        log.error("查询余额异常: %s", e)
-        raise RuntimeError("查询余额请求失败") from None
+    except requests.RequestException:
+        raise RetryableQuotaError("查询余额网络请求失败") from None
     raise RuntimeError("查询余额失败或响应缺少 quota")
+
+
+def get_quota(session: requests.Session, access_token: str, user_id) -> int:
+    """保留登录 Cookie/token，余额查询失败时有限地切换连接，不重复登录。"""
+    current = session.proxies.get("https") or session.proxies.get("http") or ""
+    candidates = list(dict.fromkeys([current, *parse_proxies(PROXY_ENV), ""]))
+    attempts = candidates[:QUOTA_MAX_CONNECTIONS]
+    session.trust_env = False
+    for index, proxy_url in enumerate(attempts, 1):
+        session.proxies.clear()
+        if proxy_url:
+            session.proxies.update({"http": proxy_url, "https": proxy_url})
+        try:
+            return _get_quota_once(session, access_token, user_id)
+        except RetryableQuotaError as error:
+            log.warning("余额查询连接 %d/%d 失败：%s", index, len(attempts), error)
+            if index == len(attempts):
+                raise RuntimeError(f"{error}（已尝试 {index} 个连接）") from None
+            log.info("保留已登录会话，切换连接重试余额查询")
 
 def do_checkin_for_account(session: requests.Session, username: str, password: str) -> dict:
     """单个账号登录（触发签到）+ 查余额，返回结果 dict 供汇总通知使用"""
@@ -233,10 +264,10 @@ def run_single_mode():
     """单用户签到（原逻辑不变）"""
     log.info("签到用户: %s", mask(USERNAME))
 
-    # 1. 选出能绕过 WAF 的连接
+    # 1. 选出通过状态接口检查的连接
     session = build_working_session()
     if session is None:
-        log.error("所有连接方式均无法绕过 WAF，请检查 SOCKS5_PROXY，脚本退出")
+        log.error("所有连接方式的状态接口检查均失败，请检查 SOCKS5_PROXY，脚本退出")
         sys.exit(1)
 
     # 2. 登录触发签到
@@ -276,10 +307,10 @@ def run_multi_mode():
         sys.exit(1)
     log.info("多用户模式，共 %d 个账号", len(accounts))
 
-    # 1. 选出一个能绕过 WAF 的代理（所有账号共用）
+    # 1. 选出通过状态接口检查的初始代理
     proxy_url = find_working_proxy()
     if proxy_url is None:
-        log.error("所有连接方式均无法绕过 WAF，请检查 SOCKS5_PROXY，脚本退出")
+        log.error("所有连接方式的状态接口检查均失败，请检查 SOCKS5_PROXY，脚本退出")
         sys.exit(1)
 
     # 2. 逐账号签到（任一失败不中断，继续下一个）
@@ -289,6 +320,10 @@ def run_multi_mode():
         try:
             with create_session(proxy_url) as session:  # 独立 session，避免 cookie 串扰
                 result = do_checkin_for_account(session, username, password)
+                if not result["error"]:
+                    # Prefer the node that passed the balance endpoint for the
+                    # next account, while still giving it independent cookies.
+                    proxy_url = session.proxies.get("https") or ""
         except Exception as error:
             result = {"display": mask(username), "checked_in": False,
                       "balance_usd": 0.0, "error": f"账号执行异常（{type(error).__name__}）"}

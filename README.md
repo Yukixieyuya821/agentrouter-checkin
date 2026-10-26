@@ -106,7 +106,7 @@ env:
 2. 在仓库的 **Settings → Secrets and variables → Actions → New repository secret** 中，新建 **`MIHOMO_CONFIG_B64`**，粘贴剪贴板内容并保存。不要把原始文件或编码内容提交到 Git。
 3. 将更新后的代码和工作流推送到 GitHub，在 **Actions → AgentRouter 每日签到 → Run workflow** 手动运行一次。
 
-配置了 `MIHOMO_CONFIG_B64` 后，无需另外填写 `SOCKS5_PROXY`。工作流为每个节点创建一个仅运行器本机可访问的代理端口，签到脚本按文件顺序请求 AgentRouter 的 `/api/status`，选择首个返回成功 JSON 的节点；全部失败后仍按原逻辑尝试直连。节点越靠后，等待可能越久（每次请求超时 25 秒）。已有 `SOCKS5_PROXY` 在该模式下会被节点端口列表覆盖。
+配置了 `MIHOMO_CONFIG_B64` 后，无需另外填写 `SOCKS5_PROXY`。工作流为每个节点创建一个仅运行器本机可访问的代理端口，签到脚本按文件顺序请求 AgentRouter 的 `/api/status`，选择首个返回成功 JSON 的节点；全部失败后仍按原逻辑尝试直连。状态接口通过不保证登录和余额接口也能通过。登录成功后，如果余额查询遇到阿里云 WAF 拦截或网络故障，会保留登录会话、切换连接重试，不重复登录；先试当前连接，再按配置顺序尝试其他节点，最后为直连，合计最多尝试 5 个不同连接（较长的节点列表可能在尝试直连前就达到上限）。多账号模式会优先为下一个账号使用已成功查询余额的节点，但每个账号仍使用独立会话。业务错误或响应缺少 quota 不触发换节点。节点越靠后，等待可能越久（每次请求超时 25 秒）。已有 `SOCKS5_PROXY` 在该模式下会被节点端口列表覆盖；会话不读取宿主机的代理环境变量，以确保选择的节点或直连方式生效。
 
 支持 YAML 中 `proxies` 下直接列出的节点（包括 Shadowsocks）。只提供订阅 URL / `proxy-providers` 的文件以及依赖 `dialer-proxy` 的链式代理不适用。运行器提取节点和 `hosts`，不沿用桌面端的分流规则、DNS 监听和管理面板；节点协议仍须由该版本 Mihomo 支持。使用 [Mihomo 的 listener `proxy` 字段](https://wiki.metacubex.one/en/config/inbound/listeners/) 将各端口绑定到对应节点。
 
